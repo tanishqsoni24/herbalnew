@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { SHOP } from "@/content/shop";
 import {
   LISTING_ANCHOR_ID,
@@ -27,18 +28,14 @@ const PARENT_ART: Record<string, { icon: IconName; tint: string }> = {
   "reproductive-hormonal": { icon: "heart", tint: "repro" },
 };
 
-const FALLBACK_ART: { icon: IconName; tint: string } = { icon: "leaf", tint: "wellness" };
-
-/** The panel is named by its own heading, which `aria-labelledby` points at, so
- *  the group is announced as the shelf it belongs to. */
-const PANEL_HEADING_ID = "shop-shelf-panel-heading";
-
 type FilterLinkProps = {
   href: string;
   next: ShopParams;
   className: string;
   children: React.ReactNode;
   "aria-current"?: "true";
+  "aria-expanded"?: boolean;
+  "aria-controls"?: string;
   navOptions?: NavigateOptions;
   onNavigate: (href: string, next: ShopParams, options?: NavigateOptions) => void;
 };
@@ -67,70 +64,18 @@ function FilterLink({
   );
 }
 
-function resolveActiveParent(tree: CategoryTreeNode[], activeCategory: string): CategoryTreeNode {
-  if (!activeCategory) return tree[0];
+function resolveActiveParent(
+  tree: CategoryTreeNode[],
+  activeCategory: string,
+): CategoryTreeNode | null {
+  if (!activeCategory) return null;
 
   const childParent = tree.find((parent) =>
     parent.children.some((child) => child.slug === activeCategory),
   );
   if (childParent) return childParent;
 
-  return tree.find((parent) => parent.slug === activeCategory) ?? tree[0];
-}
-
-/** One subcategory row. Shared by the hover menu and the touch fallback panel,
- *  which render the same links for different input devices — CSS shows exactly
- *  one of them, so only that one reaches the accessibility tree. */
-function SubcategoryLink({
-  child,
-  icon,
-  active,
-  base,
-  params,
-  counts,
-  locale,
-  onNavigate,
-}: {
-  child: CategoryTreeNode["children"][number];
-  icon: IconName;
-  active: boolean;
-  base: string;
-  params: ShopParams;
-  counts: Record<string, number>;
-  locale: Locale;
-  onNavigate: (href: string, next: ShopParams, options?: NavigateOptions) => void;
-}) {
-  const blurb = tl(child.description, locale);
-
-  return (
-    <FilterLink
-      className={`shop-sub-card${active ? " is-active" : ""}`}
-      href={shopHref(base, params, { category: child.slug, page: undefined })}
-      next={nextParams(params, { category: child.slug, page: undefined })}
-      onNavigate={onNavigate}
-      aria-current={active ? "true" : undefined}
-    >
-      {/* The shelf's own mark, so a subcategory visibly wears the shelf it
-          belongs to. A per-subcategory icon would need a slug map that breaks
-          the next time the client adds one from the admin. */}
-      <span className="shop-sub-card__icon" aria-hidden="true">
-        <Icon name={icon} size={18} strokeWidth={1.4} />
-      </span>
-      <span className="shop-sub-card__text">
-        <span className="shop-sub-card__title">{tl(child.name, locale)}</span>
-        {blurb ? <span className="shop-sub-card__desc">{blurb}</span> : null}
-      </span>
-      <span className="shop-sub-card__count">{counts[child.slug] ?? 0}</span>
-      <span className="shop-sub-card__chev" aria-hidden="true">
-        <Icon name="chevron" size={16} strokeWidth={1.6} />
-      </span>
-    </FilterLink>
-  );
-}
-
-function subcategoryLabel(count: number, locale: Locale): string {
-  if (count === 1) return t(SHOP.subcategoriesOne, locale);
-  return `${count} ${t(SHOP.subcategoriesMany, locale)}`;
+  return tree.find((parent) => parent.slug === activeCategory) ?? null;
 }
 
 export function ShopFilters({
@@ -153,83 +98,130 @@ export function ShopFilters({
   const activeCategory = params.category ?? "";
   const activeSort = (params.sort ?? "featured") as ShopSort;
   const activeParent = resolveActiveParent(tree, activeCategory);
-  const activeArt = PARENT_ART[activeParent.slug] ?? FALLBACK_ART;
+  const [openSlug, setOpenSlug] = useState<string | null>(
+    activeParent?.children.length ? activeParent.slug : null,
+  );
 
-  const sorts: { value: ShopSort; label: string }[] = [
+  useEffect(() => {
+    setOpenSlug(activeParent?.children.length ? activeParent.slug : null);
+  }, [activeParent?.slug, activeParent?.children.length]);
+
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!openSlug) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (rowRef.current?.contains(target)) return;
+      setOpenSlug(null);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [openSlug]);
+
+  const sorts: { value: ShopSort; label: string; shortLabel?: string }[] = [
     { value: "featured", label: t(SHOP.sortFeatured, locale) },
     { value: "newest", label: t(SHOP.sortNewest, locale) },
-    { value: "price-asc", label: t(SHOP.sortPriceAsc, locale) },
-    { value: "price-desc", label: t(SHOP.sortPriceDesc, locale) },
+    {
+      value: "price-asc",
+      label: t(SHOP.sortPriceAsc, locale),
+      shortLabel: t(SHOP.sortPriceAscShort, locale),
+    },
+    {
+      value: "price-desc",
+      label: t(SHOP.sortPriceDesc, locale),
+      shortLabel: t(SHOP.sortPriceDescShort, locale),
+    },
   ];
 
   return (
     <div className="shop-bar">
       <div className="shop-category-section">
-        <div className="shop-category-section__head">
-          <div className="shop-category-section__intro">
-            <p className="shop-category-section__eyebrow">{t(SHOP.categoryHeading, locale)}</p>
-            <h2 className="shop-category-section__title">{t(SHOP.categorySub, locale)}</h2>
-          </div>
+        <div className="shop-category-section__intro">
+          <h2 className="shop-category-section__title">{t(SHOP.categoryHeading, locale)}</h2>
+          <p className="shop-category-section__sub">{t(SHOP.categorySub, locale)}</p>
         </div>
 
-        {/* Shelves in a row; hovering one drops its subcategories out of the
-            card itself. */}
-        <div className="shop-shelf-grid">
+        <div className="shop-cat-row" ref={rowRef}>
           {tree.map((parent) => {
-            const isOpen = parent.slug === activeParent.slug;
-            const art = PARENT_ART[parent.slug] ?? FALLBACK_ART;
+            const isOpen = openSlug === parent.slug;
+            const isParentCurrent = activeCategory === parent.slug;
+            const isBranchActive = activeParent?.slug === parent.slug;
+            const isSelected = isOpen || isBranchActive;
+            const hasChildren = parent.children.length > 0;
+            const art = PARENT_ART[parent.slug] ?? { icon: "leaf" as IconName, tint: "wellness" };
+            const panelId = `shop-cat-${parent.slug}`;
+            const clearHref = shopHref(base, params, { category: undefined, page: undefined });
+            const clearNext = nextParams(params, { category: undefined, page: undefined });
+            const parentHref = shopHref(base, params, { category: parent.slug, page: undefined });
+            const parentNext = nextParams(params, { category: parent.slug, page: undefined });
+            const closingClears = (isOpen && isParentCurrent) || (isParentCurrent && !hasChildren);
 
             return (
-              /* The slot is the positioning context: the menu is absolutely
-                 placed against this card, so it is anchored by the DOM rather
-                 than by arithmetic that has to agree with the grid. It is also
-                 why the card cannot be the outer element — an anchor cannot
-                 hold the subcategory anchors. */
               <div
                 key={parent.id}
-                className={`shop-shelf-slot shelf-tint--${art.tint}${isOpen ? " is-open" : ""}`}
+                className={`shop-cat${isOpen ? " is-open" : ""}${isSelected ? " is-selected" : ""}`}
               >
                 <FilterLink
-                  className={`shop-shelf${parent.children.length ? " has-children" : ""}`}
-                  href={shopHref(base, params, { category: parent.slug, page: undefined })}
-                  next={nextParams(params, { category: parent.slug, page: undefined })}
-                  onNavigate={onNavigate}
-                  aria-current={isOpen ? "true" : undefined}
+                  className="shop-cat__btn"
+                  href={closingClears ? clearHref : parentHref}
+                  next={closingClears ? clearNext : parentNext}
+                  onNavigate={(href, next) => {
+                    if (isOpen) {
+                      setOpenSlug(null);
+                      if (isParentCurrent) onNavigate(clearHref, clearNext);
+                      return;
+                    }
+                    if (isParentCurrent && !hasChildren) {
+                      onNavigate(clearHref, clearNext);
+                      return;
+                    }
+                    setOpenSlug(hasChildren ? parent.slug : null);
+                    if (!isBranchActive) onNavigate(href, next);
+                  }}
+                  aria-current={isParentCurrent ? "true" : undefined}
+                  {...(hasChildren
+                    ? { "aria-expanded": isOpen, "aria-controls": panelId }
+                    : {})}
                 >
-                  <span className="shop-shelf__icon" aria-hidden="true">
-                    <Icon name={art.icon} size={20} strokeWidth={1.4} />
+                  <span
+                    className={`shop-cat__icon shop-cat__icon--${art.tint}`}
+                    aria-hidden="true"
+                  >
+                    <Icon name={art.icon} size={16} strokeWidth={1.5} />
                   </span>
-                  <span className="shop-shelf__text">
-                    <span className="shop-shelf__title">{tl(parent.name, locale)}</span>
-                    <span className="shop-shelf__meta">
-                      {parent.children.length
-                        ? subcategoryLabel(parent.children.length, locale)
-                        : (counts[parent.slug] ?? 0) === 1
-                          ? t(SHOP.productsOne, locale)
-                          : `${counts[parent.slug] ?? 0} ${t(SHOP.productsMany, locale)}`}
+                  <span className="shop-cat__name">{tl(parent.name, locale)}</span>
+                  {hasChildren ? (
+                    <span className="shop-cat__chev" aria-hidden="true">
+                      <Icon name="chevron" size={14} strokeWidth={1.8} />
                     </span>
-                  </span>
-                  <span className="shop-shelf__chev" aria-hidden="true">
-                    <Icon name="chevron" size={16} strokeWidth={1.6} />
-                  </span>
+                  ) : null}
                 </FilterLink>
 
-                {parent.children.length ? (
-                  <div className="shop-shelf-menu" role="group" aria-label={tl(parent.name, locale)}>
-                    <div className="shop-sub-cards">
-                      {parent.children.map((child) => (
-                        <SubcategoryLink
-                          key={child.id}
-                          child={child}
-                          icon={art.icon}
-                          active={activeCategory === child.slug}
-                          base={base}
-                          params={params}
-                          counts={counts}
-                          locale={locale}
-                          onNavigate={onNavigate}
-                        />
-                      ))}
+                {hasChildren ? (
+                  <div className="shop-cat__menu" id={panelId}>
+                    <div role="group" aria-label={tl(parent.name, locale)}>
+                      {parent.children.map((child) => {
+                        const isChildCurrent = activeCategory === child.slug;
+
+                        return (
+                          <FilterLink
+                            key={child.id}
+                            className={`shop-sub${isChildCurrent ? " is-active" : ""}`}
+                            href={shopHref(base, params, { category: child.slug, page: undefined })}
+                            next={nextParams(params, { category: child.slug, page: undefined })}
+                            onNavigate={onNavigate}
+                            aria-current={isChildCurrent ? "true" : undefined}
+                          >
+                            <span className="shop-sub__dot" aria-hidden="true" />
+                            <span className="shop-sub__label">{tl(child.name, locale)}</span>
+                            <span className="shop-sub__count">{counts[child.slug] ?? 0}</span>
+                          </FilterLink>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null}
@@ -237,38 +229,6 @@ export function ShopFilters({
             );
           })}
         </div>
-
-        {/* Touch fallback. There is no hover on a phone, so the selected
-            shelf's subcategories are shown here instead; CSS displays exactly
-            one of the two, so only one reaches the accessibility tree. */}
-        {activeParent.children.length ? (
-          <div
-            className={`shop-shelf-panel shelf-tint--${activeArt.tint}`}
-            role="group"
-            aria-labelledby={PANEL_HEADING_ID}
-          >
-            <p className="shop-shelf-panel__head" id={PANEL_HEADING_ID}>
-              <span className="shop-shelf__eyebrow">{t(SHOP.subcategoriesMany, locale)}</span>
-              <span className="sr-only">{tl(activeParent.name, locale)}</span>
-            </p>
-
-            <div className="shop-sub-cards">
-              {activeParent.children.map((child) => (
-                <SubcategoryLink
-                  key={child.id}
-                  child={child}
-                  icon={activeArt.icon}
-                  active={activeCategory === child.slug}
-                  base={base}
-                  params={params}
-                  counts={counts}
-                  locale={locale}
-                  onNavigate={onNavigate}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
       </div>
 
       <div className="shop-listing-toolbar" id={LISTING_ANCHOR_ID}>
@@ -288,7 +248,14 @@ export function ShopFilters({
               onNavigate={onNavigate}
               aria-current={activeSort === option.value ? "true" : undefined}
             >
-              {option.label}
+              {option.shortLabel ? (
+                <>
+                  <span className="sort-label sort-label--full">{option.label}</span>
+                  <span className="sort-label sort-label--short">{option.shortLabel}</span>
+                </>
+              ) : (
+                option.label
+              )}
             </FilterLink>
           ))}
         </div>
